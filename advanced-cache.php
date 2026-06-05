@@ -10,12 +10,24 @@ if ( ! defined( 'ABSPATH' ) )
 	die();
 
 class Redis_Page_Cache {
+	/* Read */
 	private static $redis;
 	private static $redis_host = '127.0.0.1';
 	private static $redis_port = 6379;
 	private static $redis_db = 0;
 	private static $redis_auth = '';
 	private static $redis_persistent = false;
+
+	/* Write master */
+	private static $master_redis;
+	private static $master_redis_host = '127.0.0.1';
+	private static $master_redis_port = 6379;
+	private static $master_redis_db = 0;
+	private static $master_redis_auth = '';
+	private static $master_redis_persistent = false;
+
+	// We'll check that the master details are different and switch off if that are the same.
+	private static $using_master = false;
 
 	private static $ttl = 300;
 	private static $max_ttl = 3600;
@@ -97,6 +109,7 @@ class Redis_Page_Cache {
 			header( 'X-Pj-Cache-Key: ' . self::$request_hash );
 		}
 
+		// Get the redis object - we need the read one initially.
 		$redis = self::get_redis();
 		if ( ! $redis )
 			return;
@@ -150,7 +163,9 @@ class Redis_Page_Cache {
 
 				// If it's not locked, lock it for regeneration and don't serve from cache.
 				if ( ! $lock ) {
-					$lock = $redis->set( sprintf( 'pjc-%s-lock', self::$request_hash ), true, array( 'nx', 'ex' => 30 ) );
+					// This needs to write, so get the master connection if we're using a separate one.
+					$writeredis = self::get_redis( true );
+					$lock = $writeredis->set( sprintf( 'pjc-%s-lock', self::$request_hash ), true, array( 'nx', 'ex' => 30 ) );
 					if ( $lock ) {
 						if ( self::can_fcgi_regenerate() ) {
 							// Well, actually, if we can serve a stale copy but keep the process running
@@ -219,9 +234,68 @@ class Redis_Page_Cache {
 	}
 
 	/**
+	 * Initialize and/or return a Master Redis object.
+	 */
+	public static function get_master_redis() {
+
+		if ( isset( self::$master_redis ) )
+			return self::$master_redis;
+
+		self::$master_redis = false;
+
+		if ( ! class_exists( 'Redis' ) )
+			return self::$master_redis;
+
+		try {
+			$redis = new Redis;
+			if ( self::$master_redis_persistent ) {
+				$connect = $redis->pconnect( self::$master_redis_host, self::$master_redis_port );
+			} else {
+				$connect = $redis->connect( self::$master_redis_host, self::$master_redis_port );
+			}
+
+			if ( ! empty( self::$master_redis_auth ) )
+				$redis->auth( self::$master_redis_auth );
+
+			if ( ! empty( self::$master_redis_db ) )
+				$redis->select( self::$master_redis_db );
+
+			if ( true === $connect ) {
+				$redis->setOption( Redis::OPT_SERIALIZER, Redis::SERIALIZER_PHP );
+				self::$master_redis = $redis;
+			}
+		} catch ( \Exception $e ) {
+			error_log( $e->getMessage() );
+			self::$master_redis = false;
+		}
+
+		return self::$master_redis;
+	}
+
+	/**
 	 * Initialize and/or return a Redis object.
 	 */
-	public static function get_redis() {
+	public static function get_redis( $write = false ) {
+
+		// Jump in and hijack the request and return the master if this is a write request, but only if we're using a separate master connection.
+		if( $write ) {
+			if ( self::$using_master ) {
+				if ( isset( self::$master_redis ) )
+					return self::$master_redis;
+			} else {
+				// Check if master and read redis details are different, if not, we'll just use the read connection for writes as well.
+				if ( self::$master_redis_host === self::$redis_host &&
+					self::$master_redis_port === self::$redis_port &&
+					self::$master_redis_db === self::$redis_db ) {
+					self::$using_master = false;
+					return self::get_redis( false );
+				} else {
+					self::$using_master = true;
+				}
+			}
+			return self::get_master_redis();
+		}
+
 		if ( isset( self::$redis ) )
 			return self::$redis;
 
@@ -412,6 +486,12 @@ class Redis_Page_Cache {
 			'redis_db',
 			'redis_persistent',
 
+			'master_redis_host',
+			'master_redis_port',
+			'master_redis_auth',
+			'master_redis_db',
+			'master_redis_persistent',
+
 			'ttl',
 			'unique',
 			'ignore_cookies',
@@ -497,6 +577,7 @@ class Redis_Page_Cache {
 		$data['updated'] = time();
 
 		if ( $cache || self::$fcgi_regenerate ) {
+			// Need the write connection to set locks and store cache, so get the master connection if we're using a separate one.
 			$redis = self::get_redis();
 			if ( ! $redis )
 				return $output;
@@ -636,6 +717,7 @@ class Redis_Page_Cache {
 		if ( empty( $sets ) )
 			return;
 
+		// Need the write connection to set flags, so get the master connection if we're using a separate one.
 		$redis = self::get_redis();
 		if ( ! $redis )
 			return;
