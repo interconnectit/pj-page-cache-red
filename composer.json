@@ -1,6 +1,6 @@
 {
     "name": "standfirst-plugin/pj-page-cache-red",
-    "type": "wordpress-plugin",
+    "type": "wordpress-muplugin",
     "description": "Redis page caching for WordPress",
     "homepage": "https://pressjitsu.com",
     "authors": [
