@@ -284,9 +284,9 @@ class Redis_Page_Cache {
 					return self::$master_redis;
 			} else {
 				// Check if master and read redis details are different, if not, we'll just use the read connection for writes as well.
-				if ( self::$master_redis_host === self::$redis_host &&
+				if ( ( self::$master_redis_host === self::$redis_host &&
 					self::$master_redis_port === self::$redis_port &&
-					self::$master_redis_db === self::$redis_db ) {
+					self::$master_redis_db === self::$redis_db ) || ( empty( self::$master_redis_host ) ) ) {
 					self::$using_master = false;
 					return self::get_redis( false );
 				} else {
@@ -502,12 +502,26 @@ class Redis_Page_Cache {
 			'gzip',
 		);
 
+		$has_master = false;
 		foreach ( $keys as $key ) {
 			if ( isset( $pj_user_config['page_cache'][ $key ] ) ) {
 				self::$$key = $pj_user_config['page_cache'][ $key ];
 			} elseif ( isset( $redis_page_cache_config[ $key ] ) ) {
 				self::$$key = $redis_page_cache_config[ $key ];
 			}
+			// We want to check if the master is set, so we can copy from the read connection if it's not, but we don't want to check this for every key, just once.
+			if( $key === 'master_redis_host' && ! empty( self::$master_redis_host ) ) {
+				$has_master = true;
+			}
+		}
+
+		// If master details aren't set, copy from the read connection.
+		if ( ! $has_master ) {
+			self::$master_redis_host = self::$redis_host;
+			self::$master_redis_port = self::$redis_port;
+			self::$master_redis_db = self::$redis_db;
+			self::$master_redis_auth = self::$redis_auth;
+			self::$master_redis_persistent = self::$redis_persistent;
 		}
 	}
 
