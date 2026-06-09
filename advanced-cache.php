@@ -284,9 +284,9 @@ class Redis_Page_Cache {
 					return self::$master_redis;
 			} else {
 				// Check if master and read redis details are different, if not, we'll just use the read connection for writes as well.
-				if ( ( self::$master_redis_host === self::$redis_host &&
-					self::$master_redis_port === self::$redis_port &&
-					self::$master_redis_db === self::$redis_db ) || ( empty( self::$master_redis_host ) ) ) {
+				if ( ( self::$master_redis_host == self::$redis_host &&
+					self::$master_redis_port == self::$redis_port &&
+					self::$master_redis_db == self::$redis_db ) || ( empty( self::$master_redis_host ) ) ) {
 					self::$using_master = false;
 					return self::get_redis( false );
 				} else {
@@ -592,7 +592,7 @@ class Redis_Page_Cache {
 
 		if ( $cache || self::$fcgi_regenerate ) {
 			// Need the write connection to set locks and store cache, so get the master connection if we're using a separate one.
-			$redis = self::get_redis();
+			$redis = self::get_redis( true );
 			if ( ! $redis )
 				return $output;
 
@@ -732,7 +732,7 @@ class Redis_Page_Cache {
 			return;
 
 		// Need the write connection to set flags, so get the master connection if we're using a separate one.
-		$redis = self::get_redis();
+		$redis = self::get_redis( true );
 		if ( ! $redis )
 			return;
 
